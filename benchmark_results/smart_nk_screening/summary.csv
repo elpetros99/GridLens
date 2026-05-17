@@ -1,0 +1,5 @@
+candidate_pool,case,exhaustive_over_pool,k,n1_failed,n1_screen_s,n1_total,nk_combinations,nk_failed,nk_screen_s,top_contingency,top_score
+80,case9241pegase,True,2,1402,29.881331399985356,16049,3160,1,25.24945130001288,line:2559+line:2571,inf
+80,case9241pegase,False,3,1402,29.881331399985356,16049,20000,7,42.4018395000021,trafo:2068+line:2559+line:2571,inf
+80,case6470rte,True,2,2084,7.385767200001283,9005,3160,3,6.6265955999842845,line:7408+trafo:1046,inf
+80,case6470rte,False,3,2084,7.385767200001283,9005,20000,14,15.541190899995854,trafo:134+line:7084+line:7204,inf

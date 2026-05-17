@@ -1,0 +1,2 @@
+timestamp_utc,mode,case,batch_size,n_bus,n_state,nnz_ybus,build_time_s,first_solve_compile_s,warm_solve_s,convergence_rate,max_mismatch,max_iterations,tolerance,seed,load_low,load_high,per_load,jax_platform,python
+20260516T131415Z,base,case14,1,14,22,54,1.4736912999942433,3.1356015000055777,0.006303200003458187,1.0,8.743006318923108e-15,12,1e-09,1,0.8,1.2,False,cpu,3.13.5

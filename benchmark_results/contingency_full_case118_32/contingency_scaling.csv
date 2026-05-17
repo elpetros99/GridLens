@@ -1,0 +1,3 @@
+any_branch_overloaded,any_voltage_high,any_voltage_low,case,converged_rate,error,k,max_mismatch,n_contingencies,runtime_s,s_per_pf
+False,False,False,case118,0.9375,,1,nan,32,17.410989099997096,0.5440934093749092
+,,,case118,,ValueError('Contingencies do not share the same bus/PV/PQ/ref state space and cannot be topology-batched: line:0+line:11'),2,,32,4.429526000007172,

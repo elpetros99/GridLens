@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "batched-powerflow"
+version = "0.1.0"
+description = "JAX batched AC power-flow solver backed by pandapower data."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "jax>=0.4.35",
+    "jaxlib>=0.4.35",
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "pandas>=2.2",
+    "pandapower>=3.2",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,9 @@
+# Case Scalability
+
+|case|n_bus|n_line|n_trafo|n_gen|n_load|n_ext_grid|build_ok|build_s|n_state|nnz_ybus|preconditioner|first_solve_ok|first_solve_s|first_converged|first_mismatch|warm_solve_ok|warm_solve_s|warm_converged|warm_mismatch|
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+|case1354pegase|1354|1751|240|259|621|1|True|2.8789033999928506|2447|4774|fast_decoupled_dense|True|2.8685726999974577|True|6.799043903803529e-12|True|0.6808912999986205|True|6.799043903803529e-12|
+|case1888rte|1888|1976|555|271|943|1|True|2.7670934999914607|3503|6504|fast_decoupled_dense|True|24.48677370000223|False|nan|True|27.43622050000704|False|nan|
+|case2848rte|2848|2993|783|369|1388|1|True|0.07020050000573974|5325|9732|none|True|29.042668299996876|False|0.3153262757607789|True|25.494139699992957|False|0.3153262757607789|
+|case2869pegase|2869|4051|531|509|1311|1|True|0.05803100000775885|5227|10805|none|True|25.093125400002464|False|0.008593454341126393|True|22.191784499998903|False|0.008593454341126393|
+|case3120sp|3120|3487|206|247|2314|1|True|0.04825130000244826|5991|10488|none|True|26.979718900009175|False|0.7406207730147588|True|23.88452020000841|False|0.7406207730147588|

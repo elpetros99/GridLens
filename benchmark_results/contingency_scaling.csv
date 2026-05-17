@@ -1,0 +1,3 @@
+any_branch_overloaded,any_voltage_high,any_voltage_low,case,converged_rate,k,max_mismatch,n_contingencies,runtime_s,s_per_pf
+False,False,False,case14,1.0,1,5.474787290182803e-15,2,4.137474199989811,2.0687370999949053
+False,False,False,case14,0.5,2,nan,2,3.5174780000088504,1.7587390000044252

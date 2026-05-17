@@ -1,0 +1,4 @@
+build_ok,build_s,case,first_converged,first_mismatch,first_solve_ok,first_solve_s,n_bus,n_ext_grid,n_gen,n_line,n_load,n_state,n_trafo,nnz_ybus,preconditioner,warm_converged,warm_mismatch,warm_solve_ok,warm_solve_s
+True,0.06222560000605881,case118,True,2.5127122205541817e-14,True,2.8538283000088995,118,1,53,173,99,181,13,476,fast_decoupled_dense,True,2.5127122205541817e-14,True,0.037609799997881055
+True,0.1735327999922447,case300,True,4.2521541843143495e-13,True,3.7924576999939745,300,1,68,283,193,530,128,1118,fast_decoupled_dense,True,4.2521541843143495e-13,True,0.14457050000783056
+True,0.810066200006986,case1354pegase,True,6.799043903803529e-12,True,3.6572899000020698,1354,1,259,1751,621,2447,240,4774,fast_decoupled_dense,True,6.799043903803529e-12,True,0.7875241000001552

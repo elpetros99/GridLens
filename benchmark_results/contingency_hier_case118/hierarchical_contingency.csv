@@ -1,0 +1,3 @@
+case,error,k,screening_s,selected_for_ac,total_s,total_screened
+case118,ValueError('Contingencies do not share the same bus/PV/PQ/ref state space and cannot be topology-batched: line:170'),1,0.28918189999239985,32,6.310146199990413,173
+case118,"ValueError('Contingencies do not share the same bus/PV/PQ/ref state space and cannot be topology-batched: line:0+line:11, line:0+line:170, line:1+line:170, line:2+line:170, line:3+line:170')",2,1.8616297999978997,32,8.046570699996664,1024

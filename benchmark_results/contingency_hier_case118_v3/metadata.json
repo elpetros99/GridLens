@@ -1,0 +1,53 @@
+{
+  "args": {
+    "mode": "hierarchical",
+    "cases": [
+      "case118",
+      "case300",
+      "case1354pegase",
+      "case1888rte",
+      "case2848rte",
+      "case2869pegase",
+      "case3120sp",
+      "case6470rte",
+      "case6495rte",
+      "case6515rte",
+      "case9241pegase"
+    ],
+    "batch_case": "case118",
+    "batch_sizes": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      64
+    ],
+    "contingency_case": "case118",
+    "contingency_k": [
+      1,
+      2
+    ],
+    "contingency_elements": [
+      "line"
+    ],
+    "max_contingencies": 1024,
+    "top_contingencies": 32,
+    "screening_chunk_size": 256,
+    "max_iterations": 12,
+    "tolerance": 1e-08,
+    "gmres_tol": 1e-08,
+    "gmres_restart": 40,
+    "gmres_maxiter": 80,
+    "preconditioner": "auto",
+    "max_dense_preconditioner_state": 4000,
+    "check_connectivity": false,
+    "reference_pandapower": false,
+    "load_low": 0.8,
+    "load_high": 1.2,
+    "seed": 1,
+    "out_dir": "benchmark_results\\contingency_hier_case118_v3"
+  },
+  "python": "3.13.7 | packaged by Anaconda, Inc. | (main, Sep  9 2025, 19:54:37) [MSC v.1929 64 bit (AMD64)]"
+}
