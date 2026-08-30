@@ -4,7 +4,7 @@ title: "GridLens: GPU-ready batched AC power-flow and explainable N-k security a
 type: software
 authors:
   - name: "elpetros99"
-version: "0.2.0"
+version: "0.3.0"
 date-released: "2026-08-30"
 repository-code: "https://github.com/elpetros99/GridLens"
 url: "https://github.com/elpetros99/GridLens"

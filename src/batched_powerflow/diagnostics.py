@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -14,7 +15,7 @@ from .contingency import (
     apply_contingency,
 )
 from .cpu_solver import CpuNewtonOptions, compute_branch_flows_cpu, solve_batch_cpu_sparse
-from .dc_screening import DCScreeningResult, iter_nk_contingencies, screen_n1_lodf_top, screen_nk_lodf_top
+from .dc_screening import DCScreeningResult, iter_nk_contingencies, score_contingencies_dc, screen_n1_lodf_top, screen_nk_lodf_top
 from .model import PowerFlowModel, PowerFlowResult, TopologyBatchResult
 from .pandapower_adapter import PandapowerBuildOptions, from_pandapower
 from .solver import NewtonOptions, solve_batch
@@ -138,6 +139,83 @@ class DiagnosticSecurityViolation:
 
 
 @dataclass(frozen=True)
+class SecurityVerificationCertificate:
+    """Auditable coverage and numerical evidence for a security run.
+
+    The certificate proves what GridLens evaluated under its declared model,
+    universe, and tolerances. It is not a formal proof of the physical model
+    or of AC solvability outside those assumptions.
+    """
+
+    algorithm: str
+    k: int
+    elements: tuple[str, ...]
+    universe: str
+    candidate_count: int
+    dc_evaluated: int
+    dc_failed: int
+    ac_requested: int
+    ac_evaluated: int
+    ac_unresolved: int
+    ac_converged: int
+    ac_skipped: int
+    exhaustive_dc: bool
+    exhaustive_ac: bool
+    pruning: str
+    parent_tree_nodes: int
+    parent_tree_edges: int
+    parent_tree_warm_start_children: int
+    parent_tree_hash: str
+    residual_tolerance: float
+    max_ac_mismatch: float | None
+    candidate_hash: str
+    result_hash: str
+
+    def verify_candidate_coverage(self, candidates: Iterable[Contingency]) -> bool:
+        """Check that a supplied ordered candidate list matches the certificate."""
+
+        candidates = tuple(candidates)
+        return len(candidates) == self.candidate_count and _hash_contingencies(candidates) == self.candidate_hash
+
+    def verify_parent_tree(self, edges: Iterable[tuple[Contingency, Contingency]]) -> bool:
+        """Check an ordered child-to-parent mapping against the recorded tree hash."""
+
+        return _hash_parent_tree(edges) == self.parent_tree_hash
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "algorithm": self.algorithm,
+            "k": self.k,
+            "elements": list(self.elements),
+            "universe": self.universe,
+            "candidate_count": self.candidate_count,
+            "dc_evaluated": self.dc_evaluated,
+            "dc_failed": self.dc_failed,
+            "ac_requested": self.ac_requested,
+            "ac_evaluated": self.ac_evaluated,
+            "ac_unresolved": self.ac_unresolved,
+            "ac_converged": self.ac_converged,
+            "ac_skipped": self.ac_skipped,
+            "exhaustive_dc": self.exhaustive_dc,
+            "exhaustive_ac": self.exhaustive_ac,
+            "pruning": self.pruning,
+            "parent_tree_nodes": self.parent_tree_nodes,
+            "parent_tree_edges": self.parent_tree_edges,
+            "parent_tree_warm_start_children": self.parent_tree_warm_start_children,
+            "parent_tree_hash": self.parent_tree_hash,
+            "residual_tolerance": self.residual_tolerance,
+            "max_ac_mismatch": self.max_ac_mismatch,
+            "candidate_hash": self.candidate_hash,
+            "result_hash": self.result_hash,
+        }
+
+    def to_json(self) -> str:
+        import json
+
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
+
+
+@dataclass(frozen=True)
 class DiagnosticSecurityReport:
     """Complete diagnostic security-analysis summary for a chosen contingency universe."""
 
@@ -159,6 +237,9 @@ class DiagnosticSecurityReport:
     ac_backend: str = "cpu"
     ac_batch_size: int = 1
     ac_warm_start: bool = True
+    ac_unresolved: int = 0
+    pruning: str = "risk_pool"
+    certificate: SecurityVerificationCertificate | None = None
 
     def to_markdown(self) -> str:
         verdict = "SAFE" if self.safe else "UNSAFE"
@@ -184,7 +265,26 @@ class DiagnosticSecurityReport:
             f"- `ac_backend`: {self.ac_backend}",
             f"- `ac_batch_size`: {self.ac_batch_size}",
             f"- `ac_warm_start`: {self.ac_warm_start}",
+            f"- `ac_unresolved`: {self.ac_unresolved}",
+            f"- `pruning`: {self.pruning}",
         ]
+        if self.certificate is not None:
+            lines.extend(
+                [
+                    "",
+                    "## Verification Certificate",
+                    f"- `candidate_hash`: `{self.certificate.candidate_hash}`",
+                    f"- `result_hash`: `{self.certificate.result_hash}`",
+                    f"- `candidate_count`: {self.certificate.candidate_count}",
+                    f"- `dc_evaluated`: {self.certificate.dc_evaluated}",
+                    f"- `ac_evaluated`: {self.certificate.ac_evaluated}",
+                    f"- `ac_unresolved`: {self.certificate.ac_unresolved}",
+                    f"- `ac_skipped`: {self.certificate.ac_skipped}",
+                    f"- `parent_tree_nodes`: {self.certificate.parent_tree_nodes}",
+                    f"- `parent_tree_warm_start_children`: {self.certificate.parent_tree_warm_start_children}",
+                    f"- `parent_tree_hash`: `{self.certificate.parent_tree_hash}`",
+                ]
+            )
         if self.indicators:
             lines.extend(["", "## Stability Indicators"])
             for indicator in self.indicators:
@@ -263,13 +363,15 @@ def complete_diagnostic_security_analysis(
     ac_batch_size: int = 64,
     ac_warm_start: bool = True,
     jax_options: NewtonOptions | None = None,
+    exhaustive_nk: bool = False,
+    pruning: str | None = None,
 ) -> DiagnosticSecurityReport:
     """Run complete diagnostic security analysis for a selected N-k universe.
 
     `SAFE` is only reported when all evaluated checks pass within the declared
-    scope. For k > 1, the default is exhaustive over a selected N-1 risk pool;
-    set `n1_pool=None` and avoid `max_cases` only if that combinatorial universe
-    is tractable.
+    scope. The default k > 1 workflow evaluates a selected N-1 risk pool. Set
+    `exhaustive_nk=True` to enumerate every active branch N-k combination;
+    this disables risk-pool pruning and requires `max_cases=None`.
     """
 
     if k < 1:
@@ -280,6 +382,14 @@ def complete_diagnostic_security_analysis(
         raise ValueError("ac_backend must be 'cpu' or 'jax'.")
     if ac_batch_size < 1:
         raise ValueError("ac_batch_size must be >= 1.")
+    if pruning is None:
+        pruning = "none" if exhaustive_nk else "risk_pool"
+    if pruning not in {"none", "risk_pool"}:
+        raise ValueError("pruning must be 'none' or 'risk_pool'.")
+    if exhaustive_nk and max_cases is not None:
+        raise ValueError("exhaustive_nk=True requires max_cases=None.")
+    if exhaustive_nk and pruning != "none":
+        raise ValueError("exhaustive_nk=True requires pruning='none'.")
 
     build_options = build_options or PandapowerBuildOptions(check_connectivity=False, preconditioner="none")
     cpu_options = cpu_options or CpuNewtonOptions(max_iterations=30, tolerance=1e-10)
@@ -287,7 +397,34 @@ def complete_diagnostic_security_analysis(
     violations: list[DiagnosticSecurityViolation] = []
     ac_results: list[tuple[Contingency, PowerFlowResult, DiagnosticReport, np.ndarray | None]] = []
 
-    if k == 1:
+    universe = "selected N-k universe"
+    if exhaustive_nk:
+        all_contingencies = tuple(iter_nk_contingencies(net, k=k, elements=elements))
+        if k == 1:
+            dc_results = tuple(score_contingencies_dc(net, all_contingencies, options=build_options))
+            screened = list(dc_results)
+            total = len(screened)
+            dc_failed = sum(result.failed for result in screened)
+            max_dc_loading = max((result.max_loading_percent for result in screened if np.isfinite(result.max_loading_percent)), default=0.0)
+        else:
+            from math import comb
+
+            active_outages = tuple(contingency.outages[0] for contingency in iter_nk_contingencies(net, k=1, elements=elements))
+            dc = screen_nk_lodf_top(
+                net,
+                k=k,
+                candidate_outages=active_outages,
+                top_n=comb(len(active_outages), k) if len(active_outages) >= k else 1,
+                max_combinations=None,
+                options=build_options,
+            )
+            screened = list(dc.screened)
+            total = dc.total
+            dc_failed = dc.failed
+            max_dc_loading = max((result.max_loading_percent for result in screened if np.isfinite(result.max_loading_percent)), default=0.0)
+        exhaustive_dc = True
+        universe = f"all active branch N-{k} combinations over elements {elements}"
+    elif k == 1:
         n1_total = sum(1 for _ in iter_nk_contingencies(net, k=1, elements=elements))
         dc_top_n = n1_total if ac_mode == "all" and max_cases is None else max(top_n, 1)
         dc = screen_n1_lodf_top(net, top_n=dc_top_n, elements=elements, options=build_options)
@@ -299,8 +436,10 @@ def complete_diagnostic_security_analysis(
         if max_cases is not None:
             total = min(total, max_cases)
             screened = screened[:max_cases]
+        universe = f"all active branch N-1 contingencies over elements {elements}"
     else:
-        pool_size = n1_pool or top_n
+        n1_total = sum(1 for _ in iter_nk_contingencies(net, k=1, elements=elements))
+        pool_size = n1_total if pruning == "none" else (n1_pool or top_n)
         n1 = screen_n1_lodf_top(net, top_n=pool_size, elements=elements, options=build_options)
         nk_top_n = top_n
         if ac_mode == "all" and max_cases is None:
@@ -322,6 +461,7 @@ def complete_diagnostic_security_analysis(
         dc_failed = dc.failed
         max_dc_loading = max((result.max_loading_percent for result in screened if np.isfinite(result.max_loading_percent)), default=0.0)
         exhaustive_dc = dc.exhaustive_over_pool
+        universe = f"N-{k} combinations over N-1 pool of {dc.candidate_pool_size} DC-solvable contingencies"
 
     for result in screened:
         if result.failed:
@@ -355,6 +495,7 @@ def complete_diagnostic_security_analysis(
     else:
         selected_for_ac = []
 
+    tree_stats: dict[str, int] = {}
     validated = _run_ac_validation(
         net,
         selected_for_ac,
@@ -364,6 +505,7 @@ def complete_diagnostic_security_analysis(
         backend=ac_backend,
         batch_size=ac_batch_size,
         warm_start=ac_warm_start,
+        tree_stats=tree_stats,
     )
     for contingency, model, ac_result, report, loading in validated:
         if ac_result is None or not bool(ac_result.converged[0]):
@@ -410,6 +552,21 @@ def complete_diagnostic_security_analysis(
     else:
         guarantee_scope = f"Complete DC N-{k} over selected elements {elements}; AC validation only for {len(selected_for_ac)} selected contingencies."
 
+    candidate_contingencies = tuple(result.contingency for result in screened)
+    certificate = _build_security_certificate(
+        k=k,
+        elements=elements,
+        universe=universe,
+        candidate_contingencies=candidate_contingencies,
+        dc_evaluated=total,
+        dc_failed=dc_failed,
+        validated=validated,
+        exhaustive_dc=exhaustive_dc,
+        exhaustive_ac=exhaustive_ac,
+        pruning=pruning,
+        residual_tolerance=(cpu_options.tolerance if ac_backend == "cpu" else jax_options.tolerance),
+        tree_stats=tree_stats,
+    )
     safe = dc_failed == 0 and not violations and exhaustive_dc and (ac_mode == "none" or exhaustive_ac)
     return DiagnosticSecurityReport(
         safe=safe,
@@ -430,6 +587,9 @@ def complete_diagnostic_security_analysis(
         ac_backend=ac_backend,
         ac_batch_size=ac_batch_size,
         ac_warm_start=ac_warm_start,
+        ac_unresolved=len(validated) - len(ac_results),
+        pruning=pruning,
+        certificate=certificate,
     )
 
 
@@ -443,6 +603,7 @@ def _run_ac_validation(
     backend: str,
     batch_size: int,
     warm_start: bool,
+    tree_stats: dict[str, int] | None = None,
 ) -> list[tuple[Contingency, PowerFlowModel | None, PowerFlowResult | None, DiagnosticReport, np.ndarray | None]]:
     """Validate AC contingencies in chunks, with a small N-2 warm-start tree.
 
@@ -504,7 +665,7 @@ def _run_ac_validation(
 
     # Build the N-1 branch of the topology tree only when N-2 validation needs it.
     parent_starts: dict[str, np.ndarray] = {}
-    parents = tuple(dict.fromkeys(parent for parent in (parent_of(c) for c in contingencies) if parent is not None))
+    parents = tuple(dict.fromkeys(parent for parent in (parent_of(c) for c in contingencies) if parent is not None)) if warm_start else ()
     for offset in range(0, len(parents), batch_size):
         chunk = parents[offset : offset + batch_size]
         starts = [base_voltage for _ in chunk] if base_voltage is not None else None
@@ -523,6 +684,24 @@ def _run_ac_validation(
         if parent is not None and str(parent) in parent_starts:
             return parent_starts[str(parent)]
         return base_voltage
+
+    if tree_stats is not None:
+        parent_edges = tuple(
+            (contingency, parent_of(contingency))
+            for contingency in contingencies
+            if parent_of(contingency) is not None
+        )
+        tree_stats.update(
+            {
+                "parent_tree_nodes": len(parents),
+                "parent_tree_edges": sum(parent_of(contingency) is not None for contingency in contingencies),
+                "parent_tree_warm_start_children": sum(
+                    parent_of(contingency) is not None and str(parent_of(contingency)) in parent_starts
+                    for contingency in contingencies
+                ),
+                "parent_tree_hash": _hash_parent_tree((child, parent) for child, parent in parent_edges if parent is not None),
+            }
+        )
 
     def fallback_one(contingency: Contingency):
         work = apply_contingency(net, contingency)
@@ -568,6 +747,82 @@ def _run_ac_validation(
             loading = np.asarray(analysis.loading_percent[index, 0], dtype=np.float64)
             validated.append((contingency, model, result, report, loading))
     return validated
+
+
+def _hash_contingencies(contingencies: Iterable[Contingency]) -> str:
+    digest = hashlib.sha256()
+    for contingency in sorted(tuple(contingencies), key=str):
+        digest.update(str(contingency).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _hash_parent_tree(edges: Iterable[tuple[Contingency, Contingency]]) -> str:
+    digest = hashlib.sha256()
+    for child, parent in sorted(tuple(edges), key=lambda edge: (str(edge[0]), str(edge[1]))):
+        digest.update(f"{child}->{parent}\n".encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _hash_validation_results(
+    validated: Iterable[tuple[Contingency, PowerFlowModel | None, PowerFlowResult | None, DiagnosticReport, np.ndarray | None]],
+) -> str:
+    digest = hashlib.sha256()
+    for contingency, _model, result, _report, loading in validated:
+        digest.update(str(contingency).encode("utf-8"))
+        if result is None:
+            digest.update(b"<no-result>")
+            continue
+        digest.update(np.ascontiguousarray(result.converged, dtype=np.uint8).tobytes())
+        digest.update(np.ascontiguousarray(result.mismatch_norm, dtype=np.float64).tobytes())
+        digest.update(np.ascontiguousarray(result.voltages, dtype=np.complex128).tobytes())
+        if loading is not None:
+            digest.update(np.ascontiguousarray(loading, dtype=np.float64).tobytes())
+    return digest.hexdigest()
+
+
+def _build_security_certificate(
+    *,
+    k: int,
+    elements: tuple[str, ...],
+    universe: str,
+    candidate_contingencies: tuple[Contingency, ...],
+    dc_evaluated: int,
+    dc_failed: int,
+    validated: list[tuple[Contingency, PowerFlowModel | None, PowerFlowResult | None, DiagnosticReport, np.ndarray | None]],
+    exhaustive_dc: bool,
+    exhaustive_ac: bool,
+    pruning: str,
+    residual_tolerance: float,
+    tree_stats: dict[str, int],
+) -> SecurityVerificationCertificate:
+    results = [result for _, _, result, _, _ in validated if result is not None]
+    mismatches = [float(value) for result in results for value in result.mismatch_norm]
+    return SecurityVerificationCertificate(
+        algorithm="gridlens-nk-certificate-v1",
+        k=k,
+        elements=elements,
+        universe=universe,
+        candidate_count=len(candidate_contingencies),
+        dc_evaluated=dc_evaluated,
+        dc_failed=dc_failed,
+        ac_requested=len(validated),
+        ac_evaluated=len(validated),
+        ac_unresolved=len(validated) - len(results),
+        ac_converged=sum(bool(result.converged[0]) for result in results),
+        ac_skipped=max(0, dc_evaluated - len(validated)),
+        exhaustive_dc=exhaustive_dc,
+        exhaustive_ac=exhaustive_ac,
+        pruning=pruning,
+        parent_tree_nodes=tree_stats.get("parent_tree_nodes", 0),
+        parent_tree_edges=tree_stats.get("parent_tree_edges", 0),
+        parent_tree_warm_start_children=tree_stats.get("parent_tree_warm_start_children", 0),
+        parent_tree_hash=tree_stats.get("parent_tree_hash", hashlib.sha256(b"").hexdigest()),
+        residual_tolerance=float(residual_tolerance),
+        max_ac_mismatch=max(mismatches, default=None),
+        candidate_hash=_hash_contingencies(candidate_contingencies),
+        result_hash=_hash_validation_results(validated),
+    )
 
 
 def _aggregate_ac_voltage_indicators(

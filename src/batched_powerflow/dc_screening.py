@@ -436,16 +436,17 @@ def screen_nk_lodf_top(
     net,
     *,
     k: int,
-    candidate_results: Sequence[DCScreeningResult],
+    candidate_results: Sequence[DCScreeningResult] = (),
+    candidate_outages: Sequence[Outage] | None = None,
     top_n: int = 32,
     max_combinations: int | None = None,
     options: PandapowerBuildOptions | None = None,
 ) -> NKLODFScreening:
     """Screen N-k combinations over a candidate pool using multi-outage LODF.
 
-    This is exact for the DC linear model over the candidate pool. It is not an
-    exhaustive network-wide N-k guarantee unless the candidate pool contains
-    every active branch being considered.
+    This is exact for the DC linear model over the candidate pool. Pass
+    ``candidate_outages`` with every active branch to make the candidate pool
+    explicit and exhaustive over that branch universe. It is not an AC proof.
     """
 
     if k < 2:
@@ -457,11 +458,13 @@ def screen_nk_lodf_top(
     rows_by_outage = base.branch_rows_by_outage
     candidates: list[tuple[Outage, int]] = []
     seen: set[Outage] = set()
-    for result in candidate_results:
-        for outage in result.contingency.outages:
-            if outage not in seen and outage in rows_by_outage:
-                seen.add(outage)
-                candidates.append((outage, rows_by_outage[outage]))
+    source_outages = candidate_outages
+    if source_outages is None:
+        source_outages = tuple(outage for result in candidate_results for outage in result.contingency.outages)
+    for outage in source_outages:
+        if outage not in seen and outage in rows_by_outage:
+            seen.add(outage)
+            candidates.append((outage, rows_by_outage[outage]))
 
     if len(candidates) < k:
         return NKLODFScreening((), total=0, failed=0, k=k, candidate_pool_size=len(candidates), exhaustive_over_pool=True)

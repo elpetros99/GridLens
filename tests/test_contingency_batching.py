@@ -1,5 +1,6 @@
 import numpy as np
 import pandapower.networks as pn
+import pytest
 
 from batched_powerflow import (
     CpuNewtonOptions,
@@ -11,6 +12,7 @@ from batched_powerflow import (
     solve_batch_cpu_sparse,
 )
 from batched_powerflow.contingency import Contingency, Outage, apply_contingency
+from batched_powerflow.dc_screening import iter_nk_contingencies
 from batched_powerflow.pandapower_adapter import PandapowerBuildOptions
 from batched_powerflow.solver import compute_branch_flows
 
@@ -90,3 +92,66 @@ def test_diagnostic_security_analysis_exposes_batched_ac_controls():
     assert report.ac_batch_size == 2
     assert report.ac_warm_start
     assert report.ac_validated == 3
+
+
+def test_exhaustive_n2_dc_certificate_covers_full_case14_line_universe():
+    net = pn.case14()
+    report = complete_diagnostic_security_analysis(
+        net,
+        k=2,
+        elements=("line",),
+        exhaustive_nk=True,
+        pruning="none",
+        ac_mode="none",
+        build_options=BUILD,
+    )
+    certificate = report.certificate
+    assert certificate is not None
+    assert certificate.candidate_count == len(net.line) * (len(net.line) - 1) // 2
+    assert certificate.dc_evaluated == certificate.candidate_count
+    assert certificate.exhaustive_dc
+    assert not certificate.exhaustive_ac
+    assert len(certificate.candidate_hash) == 64
+    assert len(certificate.result_hash) == 64
+    assert "candidate_hash" in certificate.to_json()
+    assert certificate.verify_candidate_coverage(iter_nk_contingencies(net, k=2, elements=("line",)))
+
+
+def test_exhaustive_n2_ac_certificate_attempts_every_case9_pair():
+    net = pn.case9()
+    report = complete_diagnostic_security_analysis(
+        net,
+        k=2,
+        elements=("line",),
+        exhaustive_nk=True,
+        pruning="none",
+        ac_mode="all",
+        ac_batch_size=16,
+        build_options=BUILD,
+        cpu_options=CpuNewtonOptions(max_iterations=20, tolerance=1e-9),
+    )
+    certificate = report.certificate
+    assert certificate is not None
+    assert certificate.candidate_count == len(net.line) * (len(net.line) - 1) // 2
+    assert certificate.ac_requested == certificate.candidate_count
+    assert certificate.ac_evaluated + certificate.ac_skipped == certificate.candidate_count
+    assert certificate.exhaustive_dc
+    assert certificate.exhaustive_ac
+    edges = tuple(
+        (contingency, Contingency((contingency.outages[0],)))
+        for contingency in iter_nk_contingencies(net, k=2, elements=("line",))
+    )
+    assert certificate.parent_tree_nodes > 0
+    assert certificate.parent_tree_warm_start_children > 0
+    assert certificate.verify_parent_tree(edges)
+
+
+def test_exhaustive_n2_rejects_risk_pool_pruning():
+    with pytest.raises(ValueError, match="pruning='none'"):
+        complete_diagnostic_security_analysis(
+            pn.case14(),
+            k=2,
+            exhaustive_nk=True,
+            pruning="risk_pool",
+            ac_mode="none",
+        )

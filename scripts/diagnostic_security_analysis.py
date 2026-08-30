@@ -20,6 +20,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--elements", nargs="+", default=["line", "trafo"])
     parser.add_argument("--max-cases", type=int, default=None, help="Cap N-k combinations. If set, the report is not a complete guarantee.")
     parser.add_argument("--n1-pool", type=int, default=None, help="For k>1, screen N-k over this many highest-risk N-1 candidates.")
+    parser.add_argument("--exhaustive-nk", action="store_true", help="Enumerate every active branch N-k combination; disables risk-pool pruning.")
+    parser.add_argument("--pruning", choices=["none", "risk_pool"], default=None, help="Use risk-pool pruning by default, or none automatically with --exhaustive-nk.")
     parser.add_argument("--top-n", type=int, default=20)
     parser.add_argument("--ac-mode", choices=["none", "top", "all"], default="top")
     parser.add_argument("--ac-backend", choices=["cpu", "jax"], default="cpu", help="AC validation backend; JAX uses the GPU-compatible topology batch path.")
@@ -39,6 +41,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     net = getattr(pn, args.case)()
+    pruning = args.pruning if args.pruning is not None else ("none" if args.exhaustive_nk else "risk_pool")
     report = complete_diagnostic_security_analysis(
         net,
         k=args.k,
@@ -56,6 +59,8 @@ def main() -> None:
         ac_batch_size=args.ac_batch_size,
         ac_warm_start=not args.no_ac_warm_start,
         jax_options=NewtonOptions(max_iterations=args.jax_max_iterations, tolerance=args.tolerance),
+        exhaustive_nk=args.exhaustive_nk,
+        pruning=pruning,
     )
     print(report.to_markdown())
 

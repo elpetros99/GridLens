@@ -148,6 +148,14 @@ $env:PYTHONPATH='src'
 & 'C:\Users\elpetros\.conda\envs\jax\python.exe' scripts\diagnostic_security_analysis.py --case case14 --k 2 --elements line --n1-pool 6 --top-n 5
 ```
 
+For a complete, auditable N-2 run on a tractable network, disable pruning and enumerate every active branch pair:
+
+```powershell
+& 'C:\Users\elpetros\.conda\envs\jax\python.exe' scripts\diagnostic_security_analysis.py --case case14 --k 2 --elements line --exhaustive-nk --pruning none --ac-mode all
+```
+
+The resulting `security.certificate` contains candidate/result hashes and coverage counts. Risk-pool pruning is useful for triage, but omitted contingencies cannot support a complete `SAFE` claim unless a separately proven conservative bound certifies them.
+
 Generate a full real-output showcase:
 
 ```powershell
@@ -363,7 +371,7 @@ GridLens is licensed under the [Apache License 2.0](LICENSE). The license permit
 @software{gridlens_2026,
   author  = {elpetros99},
   title   = {GridLens: Batched AC Power Flow And Explainable N-k Security Analysis},
-  version = {0.2.0},
+  version = {0.3.0},
   year    = {2026},
   url     = {https://github.com/elpetros99/GridLens},
   license = {Apache-2.0}

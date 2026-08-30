@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "batched-powerflow"
-version = "0.2.0"
+version = "0.3.0"
 description = "GPU-ready batched AC power-flow and explainable N-k security analysis for pandapower networks."
 readme = "README.md"
 authors = [{name = "elpetros99"}]

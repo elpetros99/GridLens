@@ -95,6 +95,26 @@ Set `ac_backend="jax"` to use the topology-batched JAX implementation. Its align
 
 The N-2 tree changes only the initial guess. Every requested contingency still gets its own AC solve and safety checks. Warm starts, Jacobian reuse, and topology batching accelerate validation but do not constitute a mathematical safety proof by themselves; the guarantee remains exhaustive only when the declared contingency universe is exhaustively screened and AC-validated.
 
+For an auditable full-universe N-2 run on a tractable network, use:
+
+```python
+security = complete_diagnostic_security_analysis(
+    net,
+    k=2,
+    elements=("line",),
+    exhaustive_nk=True,
+    pruning="none",
+    ac_mode="all",
+    max_cases=None,
+)
+print(security.safe)
+print(security.certificate.to_json())
+```
+
+The certificate records the declared universe, candidate/result hashes, DC and AC counts, unresolved AC cases, residual tolerance, convergence counts, and parent-tree coverage. `exhaustive_ac=True` means every declared case was attempted; `ac_unresolved` and `ac_converged` show whether those attempts actually produced converged solutions. A certificate is an auditable numerical record under the selected pandapower/JAX model and tolerances; it is not a formal theorem about unmodelled physics.
+
+Pruning is allowed for triage with `pruning="risk_pool"` (the default): it evaluates N-2 combinations over a selected high-risk N-1 pool and cannot produce a complete network-wide `SAFE` claim. For a complete claim, do not prune potentially safe cases. It is always safe to short-circuit further AC work for a case already proven unsafe by an exact DC/topology check, but that case must remain counted as unsafe in the certificate. LODF ranking alone is not a proof that an omitted AC contingency is safe.
+
 ## Command-Line Workflows
 
 Explain one failed or suspicious case:
