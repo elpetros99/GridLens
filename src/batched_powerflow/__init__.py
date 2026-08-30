@@ -1,7 +1,7 @@
 """JAX batched AC power-flow solver backed by pandapower data."""
 
 from .model import PowerFlowModel, PowerFlowResult, TopologyBatchResult
-from .cpu_solver import CpuNewtonOptions, solve_batch_cpu_sparse
+from .cpu_solver import CpuNewtonOptions, compute_branch_flows_cpu, solve_batch_cpu_sparse
 from .pandapower_adapter import PandapowerBuildOptions, PandapowerFeatureOptions, UnsupportedFeature, from_pandapower
 from .solver import BatchedPowerFlowSolver, NewtonOptions, solve_batch, solve_topology_batch
 from .contingency import (
@@ -9,10 +9,12 @@ from .contingency import (
     ContingencyAnalysis,
     ContingencyBatchData,
     Outage,
+    analyze_contingencies_cpu_sparse,
     analyze_contingencies_batched,
     build_contingency_batch_data,
     enumerate_nk,
     solve_contingencies_batched,
+    solve_contingencies_cpu_sparse,
 )
 from .dc_screening import (
     DCScreeningResult,
@@ -53,6 +55,7 @@ __all__ = [
     "DiagnosticSecurityReport",
     "DiagnosticSecurityViolation",
     "CpuNewtonOptions",
+    "compute_branch_flows_cpu",
     "DCScreeningResult",
     "HierarchicalSecurityAnalysis",
     "N1LODFScreening",
@@ -66,6 +69,7 @@ __all__ = [
     "TopologyBatchResult",
     "UnsupportedFeature",
     "analyze_contingencies_batched",
+    "analyze_contingencies_cpu_sparse",
     "build_contingency_batch_data",
     "chunk_contingencies",
     "enumerate_nk",
@@ -80,6 +84,7 @@ __all__ = [
     "screen_nk_lodf_top",
     "solve_batch",
     "solve_contingencies_batched",
+    "solve_contingencies_cpu_sparse",
     "solve_topology_batch",
     "score_contingencies_dc",
     "solve_batch_cpu_sparse",

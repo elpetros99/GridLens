@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use GridLens in research or technical work, please cite this software."
+title: "GridLens: GPU-ready batched AC power-flow and explainable N-k security analysis"
+type: software
+authors:
+  - name: "elpetros99"
+version: "0.2.0"
+date-released: "2026-08-30"
+repository-code: "https://github.com/elpetros99/GridLens"
+url: "https://github.com/elpetros99/GridLens"
+license: "Apache-2.0"
+keywords:
+  - "power systems"
+  - "power flow"
+  - "contingency analysis"
+  - "N-1"
+  - "N-2"
+  - "JAX"
+  - "pandapower"
+abstract: >-
+  GridLens combines pandapower model extraction, sparse CPU Newton/SuperLU
+  solves, JAX topology and scenario batching, DC LODF screening, warm-started
+  N-1/N-2 AC validation, and explainable security diagnostics.

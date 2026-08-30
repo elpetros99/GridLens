@@ -7,11 +7,17 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse import csgraph
 
-from .contingency import Contingency, apply_contingency
-from .cpu_solver import CpuNewtonOptions, solve_batch_cpu_sparse
+from .contingency import (
+    Contingency,
+    analyze_contingencies_batched,
+    analyze_contingencies_cpu_sparse,
+    apply_contingency,
+)
+from .cpu_solver import CpuNewtonOptions, compute_branch_flows_cpu, solve_batch_cpu_sparse
 from .dc_screening import DCScreeningResult, iter_nk_contingencies, screen_n1_lodf_top, screen_nk_lodf_top
 from .model import PowerFlowModel, PowerFlowResult, TopologyBatchResult
 from .pandapower_adapter import PandapowerBuildOptions, from_pandapower
+from .solver import NewtonOptions, solve_batch
 
 
 Severity = str
@@ -150,6 +156,9 @@ class DiagnosticSecurityReport:
     max_ac_vm_pu: float | None
     violations: tuple[DiagnosticSecurityViolation, ...]
     indicators: tuple[DiagnosticIndicator, ...]
+    ac_backend: str = "cpu"
+    ac_batch_size: int = 1
+    ac_warm_start: bool = True
 
     def to_markdown(self) -> str:
         verdict = "SAFE" if self.safe else "UNSAFE"
@@ -172,6 +181,9 @@ class DiagnosticSecurityReport:
             f"- `max_ac_loading_percent`: {self.max_ac_loading_percent}",
             f"- `min_ac_vm_pu`: {self.min_ac_vm_pu}",
             f"- `max_ac_vm_pu`: {self.max_ac_vm_pu}",
+            f"- `ac_backend`: {self.ac_backend}",
+            f"- `ac_batch_size`: {self.ac_batch_size}",
+            f"- `ac_warm_start`: {self.ac_warm_start}",
         ]
         if self.indicators:
             lines.extend(["", "## Stability Indicators"])
@@ -247,6 +259,10 @@ def complete_diagnostic_security_analysis(
     loading_limit_percent: float = 100.0,
     build_options: PandapowerBuildOptions | None = None,
     cpu_options: CpuNewtonOptions | None = None,
+    ac_backend: str = "cpu",
+    ac_batch_size: int = 64,
+    ac_warm_start: bool = True,
+    jax_options: NewtonOptions | None = None,
 ) -> DiagnosticSecurityReport:
     """Run complete diagnostic security analysis for a selected N-k universe.
 
@@ -260,14 +276,21 @@ def complete_diagnostic_security_analysis(
         raise ValueError("k must be >= 1.")
     if ac_mode not in {"none", "top", "all"}:
         raise ValueError("ac_mode must be 'none', 'top', or 'all'.")
+    if ac_backend not in {"cpu", "jax"}:
+        raise ValueError("ac_backend must be 'cpu' or 'jax'.")
+    if ac_batch_size < 1:
+        raise ValueError("ac_batch_size must be >= 1.")
 
     build_options = build_options or PandapowerBuildOptions(check_connectivity=False, preconditioner="none")
     cpu_options = cpu_options or CpuNewtonOptions(max_iterations=30, tolerance=1e-10)
+    jax_options = jax_options or NewtonOptions(max_iterations=12, tolerance=1e-10)
     violations: list[DiagnosticSecurityViolation] = []
     ac_results: list[tuple[Contingency, PowerFlowResult, DiagnosticReport, np.ndarray | None]] = []
 
     if k == 1:
-        dc = screen_n1_lodf_top(net, top_n=top_n if ac_mode != "all" else max(top_n, 1), elements=elements, options=build_options)
+        n1_total = sum(1 for _ in iter_nk_contingencies(net, k=1, elements=elements))
+        dc_top_n = n1_total if ac_mode == "all" and max_cases is None else max(top_n, 1)
+        dc = screen_n1_lodf_top(net, top_n=dc_top_n, elements=elements, options=build_options)
         screened = list(dc.screened)
         total = dc.total
         dc_failed = dc.failed
@@ -279,11 +302,18 @@ def complete_diagnostic_security_analysis(
     else:
         pool_size = n1_pool or top_n
         n1 = screen_n1_lodf_top(net, top_n=pool_size, elements=elements, options=build_options)
+        nk_top_n = top_n
+        if ac_mode == "all" and max_cases is None:
+            pool_cases = len(n1.screened)
+            if pool_cases >= k:
+                from math import comb
+
+                nk_top_n = comb(pool_cases, k)
         dc = screen_nk_lodf_top(
             net,
             k=k,
             candidate_results=n1.screened,
-            top_n=top_n,
+            top_n=nk_top_n,
             max_combinations=max_cases,
             options=build_options,
         )
@@ -325,18 +355,17 @@ def complete_diagnostic_security_analysis(
     else:
         selected_for_ac = []
 
-    for contingency in selected_for_ac:
-        work = apply_contingency(net, contingency)
-        model = None
-        ac_result = None
-        exception = None
-        try:
-            model = from_pandapower(work, options=build_options)
-            ac_result = solve_batch_cpu_sparse(model, options=cpu_options)
-        except Exception as exc:
-            exception = exc
-        report = explain_powerflow(work, model=model, result=ac_result, contingency=contingency, exception=exception)
-        loading = _ac_loading_percent(model, ac_result.voltages[0]) if model is not None and ac_result is not None and ac_result.voltages.size else None
+    validated = _run_ac_validation(
+        net,
+        selected_for_ac,
+        build_options=build_options,
+        cpu_options=cpu_options,
+        jax_options=jax_options,
+        backend=ac_backend,
+        batch_size=ac_batch_size,
+        warm_start=ac_warm_start,
+    )
+    for contingency, model, ac_result, report, loading in validated:
         if ac_result is None or not bool(ac_result.converged[0]):
             violations.append(
                 DiagnosticSecurityViolation(
@@ -398,7 +427,147 @@ def complete_diagnostic_security_analysis(
         max_ac_vm_pu=max_ac_vm,
         violations=tuple(violations),
         indicators=tuple(indicators),
+        ac_backend=ac_backend,
+        ac_batch_size=ac_batch_size,
+        ac_warm_start=ac_warm_start,
     )
+
+
+def _run_ac_validation(
+    net,
+    contingencies: Iterable[Contingency],
+    *,
+    build_options: PandapowerBuildOptions,
+    cpu_options: CpuNewtonOptions,
+    jax_options: NewtonOptions,
+    backend: str,
+    batch_size: int,
+    warm_start: bool,
+) -> list[tuple[Contingency, PowerFlowModel | None, PowerFlowResult | None, DiagnosticReport, np.ndarray | None]]:
+    """Validate AC contingencies in chunks, with a small N-2 warm-start tree.
+
+    The tree is deliberately conservative: an N-2 case is initialized from its
+    first N-1 parent when that parent converges; otherwise it falls back to the
+    solved base case or the model's native start. It changes only initialization,
+    never the equations or the convergence verdict.
+    """
+
+    contingencies = tuple(contingencies)
+    if not contingencies:
+        return []
+    batch_size = max(1, int(batch_size))
+
+    def parent_of(contingency: Contingency) -> Contingency | None:
+        if len(contingency.outages) < 2:
+            return None
+        return Contingency((contingency.outages[0],))
+
+    def solve_chunk(
+        chunk: tuple[Contingency, ...],
+        starts: list[np.ndarray | None] | None,
+    ):
+        vm0 = va0 = None
+        if warm_start and starts is not None and all(start is not None for start in starts):
+            values = np.asarray([start for start in starts if start is not None], dtype=np.complex128)
+            vm0 = np.abs(values)
+            va0 = np.angle(values)
+        if backend == "jax":
+            return analyze_contingencies_batched(
+                net,
+                chunk,
+                build_options=build_options,
+                solver_options=jax_options,
+                vm0_batch=vm0,
+                va0_batch=va0,
+            )
+        return analyze_contingencies_cpu_sparse(
+            net,
+            chunk,
+            build_options=build_options,
+            solver_options=cpu_options,
+            vm0_batch=vm0,
+            va0_batch=va0,
+        )
+
+    base_voltage: np.ndarray | None = None
+    if warm_start:
+        try:
+            base_model = from_pandapower(net, name="base", options=build_options)
+            if backend == "jax":
+                base_result = solve_batch(base_model, options=jax_options)
+            else:
+                base_result = solve_batch_cpu_sparse(base_model, options=cpu_options)
+            if bool(base_result.converged[0]) and np.all(np.isfinite(base_result.voltages[0])):
+                base_voltage = np.asarray(base_result.voltages[0], dtype=np.complex128)
+        except Exception:
+            base_voltage = None
+
+    # Build the N-1 branch of the topology tree only when N-2 validation needs it.
+    parent_starts: dict[str, np.ndarray] = {}
+    parents = tuple(dict.fromkeys(parent for parent in (parent_of(c) for c in contingencies) if parent is not None))
+    for offset in range(0, len(parents), batch_size):
+        chunk = parents[offset : offset + batch_size]
+        starts = [base_voltage for _ in chunk] if base_voltage is not None else None
+        try:
+            analysis = solve_chunk(chunk, starts)
+        except Exception:
+            continue
+        for index, contingency in enumerate(chunk):
+            if bool(analysis.result.converged[index, 0]) and np.all(np.isfinite(analysis.result.voltages[index, 0])):
+                parent_starts[str(contingency)] = np.asarray(analysis.result.voltages[index, 0], dtype=np.complex128)
+
+    def start_for(contingency: Contingency) -> np.ndarray | None:
+        if not warm_start:
+            return None
+        parent = parent_of(contingency)
+        if parent is not None and str(parent) in parent_starts:
+            return parent_starts[str(parent)]
+        return base_voltage
+
+    def fallback_one(contingency: Contingency):
+        work = apply_contingency(net, contingency)
+        model = None
+        ac_result = None
+        exception = None
+        try:
+            model = from_pandapower(work, name=str(contingency), options=build_options)
+            initial = start_for(contingency)
+            if backend == "jax":
+                ac_result = solve_batch(model, options=jax_options)
+            else:
+                ac_result = solve_batch_cpu_sparse(
+                    model,
+                    options=cpu_options,
+                    initial_voltages=None if initial is None else initial[None, :],
+                )
+        except Exception as exc:
+            exception = exc
+        report = explain_powerflow(work, model=model, result=ac_result, contingency=contingency, exception=exception)
+        loading = _ac_loading_percent(model, ac_result.voltages[0]) if model is not None and ac_result is not None and ac_result.voltages.size else None
+        return contingency, model, ac_result, report, loading
+
+    validated = []
+    for offset in range(0, len(contingencies), batch_size):
+        chunk = contingencies[offset : offset + batch_size]
+        starts = [start_for(contingency) for contingency in chunk]
+        try:
+            analysis = solve_chunk(chunk, starts)
+        except Exception:
+            validated.extend(fallback_one(contingency) for contingency in chunk)
+            continue
+        for index, contingency in enumerate(chunk):
+            model = analysis.models[index] if analysis.models else None
+            result = PowerFlowResult(
+                voltages=np.asarray(analysis.result.voltages[index, 0:1]),
+                converged=np.asarray(analysis.result.converged[index, 0:1]),
+                mismatch_norm=np.asarray(analysis.result.mismatch_norm[index, 0:1]),
+                iterations=analysis.result.iterations,
+            )
+            report_net = model.net if model is not None and model.net is not None else apply_contingency(net, contingency)
+            report = explain_powerflow(report_net, model=model, result=result, contingency=contingency)
+            loading = np.asarray(analysis.loading_percent[index, 0], dtype=np.float64)
+            validated.append((contingency, model, result, report, loading))
+    return validated
 
 
 def _aggregate_ac_voltage_indicators(
@@ -789,9 +958,7 @@ def _ac_loading_percent(model: PowerFlowModel, voltage: np.ndarray) -> np.ndarra
         return None
     try:
         from pandapower.pypower.idx_brch import RATE_A
-        from .solver import compute_branch_flows
-
-        sf, st = compute_branch_flows(model, voltage)
+        sf, st = compute_branch_flows_cpu(model, voltage)
         rate_a = np.asarray(model.ppc["branch"][:, RATE_A], dtype=np.float64)
         branch_mva = np.maximum(np.abs(sf[0]), np.abs(st[0]))
         return np.divide(

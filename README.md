@@ -2,14 +2,26 @@
   <img src="assets/gridlens-logo.svg" alt="GridLens Diagnostics logo" width="720">
 </p>
 
-# JAX Batched Power Flow
+# GridLens: Batched AC Power Flow And Explainable N-k Security Analysis
 
-Pandapower-backed batched AC power flow, contingency screening, and explainable diagnostic security analysis for general balanced transmission-style grids.
+GridLens is an open-source, pandapower-backed toolkit for fast balanced AC power flow, contingency screening, and explainable diagnostic security analysis on transmission-style grids. It provides a CPU-first reference path with sparse SuperLU factorizations and a GPU-compatible JAX path built around the same aligned topology/scenario data model.
 
 The project has two layers:
 
 - **Batched Power Flow Core**: JAX and CPU sparse Newton solvers built from pandapower network data.
 - **GridLens Diagnostics**: a professional diagnostic/security layer that explains singularities, infeasibility, non-convergence, voltage/frequency risk indicators, and N-k SAFE / UNSAFE verdicts.
+
+## Performance Architecture
+
+The fast contingency path is layered so that acceleration does not weaken the safety semantics:
+
+- DC PTDF/LODF screening cheaply ranks the full N-1 universe and constructs a selected N-k risk pool.
+- CPU AC validation uses sparse Newton iterations with one SuperLU factorization per Jacobian, optional `jacobian_reuse`, and warm starts from the base state.
+- N-2 validation can initialize each double outage from its solved N-1 parent, forming a topology tree without reusing a solution as evidence.
+- Aligned `(topology, scenario, sparse-entry)` arrays feed the JAX topology batch solver. The same call can run on CPU or a CUDA-enabled JAX device; SuperLU is the CPU backend and is not required on GPU.
+- Every requested AC contingency is still solved and checked independently. Batching, warm starts, and Jacobian reuse change execution cost and initial guesses, not the contingency equations or the declared guarantee.
+
+Use `scripts/benchmark_contingency_batching.py` to measure cold/sequential CPU, warm SuperLU batches, Jacobian reuse, and optional JAX execution across network sizes.
 
 ## Why This Exists
 
@@ -145,6 +157,8 @@ $env:PYTHONPATH='src'
 
 Generated example report: [benchmark_results/diagnostic_showcase.md](benchmark_results/diagnostic_showcase.md)
 
+Additional focused tutorials are in [examples/README.md](examples/README.md): scenario batching, exhaustive N-1 AC validation, N-2 parent-tree warm starts, and causal diagnostics.
+
 ## Real Workflow Pattern
 
 1. Build a pandapower network.
@@ -187,6 +201,18 @@ Power flow alone cannot compute RoCoF or frequency nadir. Frequency indicators a
 ## Benchmarks
 
 All numbers below are from the checked-in benchmark artifacts under `benchmark_results/` and were run in the local `jax` conda environment on CPU. JAX reported only `CpuDevice(id=0)`, so these are not GPU timings. AC PF execution times exclude JAX compilation; the CPU sparse table separates pandapower model extraction (`build s`) from Newton solve execution (`solve s`).
+
+The new contingency profiler measures 32 N-1 cases per network (20 for case14), including model extraction and sparse Newton execution. The fastest observed CPU configuration in that run was:
+
+| case | buses | best measured mode | batch | total s | converged |
+|---|---:|---|---:|---:|---:|
+| `case14` | 14 | SuperLU + Jacobian reuse 2 | 32 | 1.088 | 19/20 |
+| `case30` | 30 | SuperLU + Jacobian reuse 2 | 8 | 2.385 | 30/32 |
+| `case57` | 57 | SuperLU | 32 | 1.728 | 32/32 |
+| `case118` | 118 | SuperLU + Jacobian reuse 2 | 8 | 1.766 | 30/32 |
+| `case300` | 300 | SuperLU + Jacobian reuse 2 | 1 | 2.134 | 26/32 |
+
+These are timing observations, not universal speed guarantees. The `converged` counts and infinite maximum residuals in rows with singular/islanded outages are intentional: GridLens records those contingencies as unsafe rather than dropping them. See the full [contingency batching CSV](benchmark_results/contingency_batching.csv) and [Markdown report](benchmark_results/contingency_batching.md).
 
 Run structured benchmarks:
 
@@ -313,8 +339,10 @@ Important limitations:
 - `src/batched_powerflow/pandapower_adapter.py`: pandapower extraction and model building.
 - `src/batched_powerflow/dc_screening.py`: DC N-1 and smart N-k screening.
 - `src/batched_powerflow/diagnostics.py`: GridLens diagnostics and security reports.
+- `src/batched_powerflow/contingency.py`: aligned topology batches, CPU SuperLU validation, warm starts, and N-2 parent-tree helpers.
 - `scripts/diagnostic_explain.py`: single-case explanation CLI.
 - `scripts/diagnostic_security_analysis.py`: complete N-k security CLI.
+- `scripts/benchmark_contingency_batching.py`: reproducible network-size and batch-size profiler.
 - `examples/diagnostic_showcase.py`: real workflow showcase generator.
 
 ## Verification
@@ -326,3 +354,18 @@ Run:
 ```
 
 The current suite covers solver parity, DC screening, N-k screening, diagnostics, stability indicators, and command-facing security-analysis behavior.
+
+## License And Citation
+
+GridLens is licensed under the [Apache License 2.0](LICENSE). The license permits use, modification, and redistribution subject to its terms and notices. For academic or technical publications, please cite the software using [CITATION.cff](CITATION.cff); this is a scholarly request, not an additional licensing restriction. A project notice is included in [NOTICE](NOTICE).
+
+```bibtex
+@software{gridlens_2026,
+  author  = {elpetros99},
+  title   = {GridLens: Batched AC Power Flow And Explainable N-k Security Analysis},
+  version = {0.2.0},
+  year    = {2026},
+  url     = {https://github.com/elpetros99/GridLens},
+  license = {Apache-2.0}
+}
+```

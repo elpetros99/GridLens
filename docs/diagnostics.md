@@ -70,6 +70,31 @@ print(security.safe)
 print(security.to_markdown())
 ```
 
+### Fast AC validation controls
+
+AC validation is CPU-first and uses SciPy SuperLU sparse factorization by default. Each Newton step factors its sparse Jacobian once and solves with that factor; `CpuNewtonOptions(jacobian_reuse=2)` enables an inexact-Newton tradeoff that reuses the same Jacobian/factorization for two steps. Warm starts can be supplied automatically from the base case for N-1 and from a parent N-1 solution for N-2:
+
+```python
+from batched_powerflow import CpuNewtonOptions
+
+security = complete_diagnostic_security_analysis(
+    net,
+    k=2,
+    elements=("line",),
+    n1_pool=32,
+    top_n=32,
+    ac_mode="top",
+    ac_backend="cpu",
+    ac_batch_size=32,
+    ac_warm_start=True,
+    cpu_options=CpuNewtonOptions(jacobian_reuse=2, max_iterations=30, tolerance=1e-10),
+)
+```
+
+Set `ac_backend="jax"` to use the topology-batched JAX implementation. Its aligned `(topology, scenario, sparse-entry)` arrays are the GPU-compatible path; on a CUDA-enabled JAX installation the same call can run on GPU. CPU SuperLU and JAX are separate linear-algebra backends, so SuperLU is not copied to the GPU.
+
+The N-2 tree changes only the initial guess. Every requested contingency still gets its own AC solve and safety checks. Warm starts, Jacobian reuse, and topology batching accelerate validation but do not constitute a mathematical safety proof by themselves; the guarantee remains exhaustive only when the declared contingency universe is exhaustively screened and AC-validated.
+
 ## Command-Line Workflows
 
 Explain one failed or suspicious case:
@@ -92,6 +117,8 @@ Run N-2 over a selected N-1 risk pool:
 $env:PYTHONPATH='src'
 & 'C:\Users\elpetros\.conda\envs\jax\python.exe' scripts\diagnostic_security_analysis.py --case case14 --k 2 --elements line --n1-pool 6 --top-n 5
 ```
+
+Use `--ac-backend jax`, `--ac-batch-size 64`, `--jacobian-reuse 2`, or `--no-ac-warm-start` to compare execution strategies.
 
 Generate a multi-scenario showcase from real pandapower networks:
 
@@ -174,4 +201,14 @@ Report contents:
 4. AC-validate all contingencies for a guarantee, or top-N contingencies for fast screening.
 5. Use GridLens reports to explain failures and prioritize remedial actions.
 6. Re-run the same command after topology, dispatch, voltage support, or protection changes.
+
+## Reproducible performance profiling
+
+The size sweep compares cold/sequential CPU validation, warm-started CPU batches using SuperLU, optional Jacobian reuse, and the GPU-compatible JAX topology path (on the currently available JAX device):
+
+```powershell
+& 'C:\Users\elpetros\.conda\envs\jax\python.exe' scripts\benchmark_contingency_batching.py --cases case14 case30 case57 case118 --max-contingencies 32 --include-jax
+```
+
+It writes CSV, JSON, Markdown, and optionally a `cProfile` dump. Always report the device, network, number of contingencies, convergence count, residual tolerance, and whether JAX compilation time is included when comparing timings.
 

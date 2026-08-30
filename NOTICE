@@ -1,0 +1,12 @@
+GridLens / batched-powerflow
+
+Copyright 2026 elpetros99
+
+This project is released under the Apache License, Version 2.0. See LICENSE.
+The project authors request that academic and technical publications using
+GridLens cite CITATION.cff. This citation request is scholarly guidance and is
+not an additional restriction on the permissions granted by Apache-2.0.
+
+GridLens depends on third-party packages with their own licenses, including
+JAX, NumPy, SciPy, pandas, and pandapower. Their licenses remain applicable to
+those components.
