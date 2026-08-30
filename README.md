@@ -148,6 +148,15 @@ $env:PYTHONPATH='src'
 & 'C:\Users\elpetros\.conda\envs\jax\python.exe' scripts\diagnostic_security_analysis.py --case case14 --k 2 --elements line --n1-pool 6 --top-n 5
 ```
 
+Run the scalable N-2 workflow on a large PEGASE case:
+
+```powershell
+$env:PYTHONPATH='src'
+& 'C:\Users\elpetros\.conda\envs\jax\python.exe' examples\tutorial_large_pegase_n2.py --case case1354pegase --n1-pool 80 --top-n 20
+```
+
+For `case1354pegase`, this evaluates all `C(80, 2) = 3,160` N-2 combinations in the selected high-risk pool and AC-validates 20 cases. Increase `--n1-pool` to widen the exact DC pool, or use `case2869pegase` / `case9241pegase` for larger stress tests. This is a scalable risk-screening certificate, not a full-universe N-2 AC proof.
+
 For a complete, auditable N-2 run on a tractable network, disable pruning and enumerate every active branch pair:
 
 ```powershell

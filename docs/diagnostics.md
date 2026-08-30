@@ -115,6 +115,17 @@ The certificate records the declared universe, candidate/result hashes, DC and A
 
 Pruning is allowed for triage with `pruning="risk_pool"` (the default): it evaluates N-2 combinations over a selected high-risk N-1 pool and cannot produce a complete network-wide `SAFE` claim. For a complete claim, do not prune potentially safe cases. It is always safe to short-circuit further AC work for a case already proven unsafe by an exact DC/topology check, but that case must remain counted as unsafe in the certificate. LODF ranking alone is not a proof that an omitted AC contingency is safe.
 
+### Large PEGASE cases
+
+For cases above 1,000 buses, use the bounded risk-pool workflow:
+
+```powershell
+$env:PYTHONPATH='src'
+& 'C:\Users\elpetros\.conda\envs\jax\python.exe' examples\tutorial_large_pegase_n2.py --case case1354pegase --n1-pool 80 --top-n 20
+```
+
+This performs complete N-1 DC screening, exact multi-outage DC evaluation over `C(80, 2) = 3,160` N-2 pairs, and batched warm-started AC validation of the top 20. The same tutorial accepts `case2869pegase` and `case9241pegase`. The full N-2 universe is much larger (`C(1,991, 2)` for the active line+transformer branches in the 1,354-bus case), so it should not be materialized or AC-solved blindly. The certificate is exhaustive over the selected risk-pool universe, not over the full network universe.
+
 ## Command-Line Workflows
 
 Explain one failed or suspicious case:
